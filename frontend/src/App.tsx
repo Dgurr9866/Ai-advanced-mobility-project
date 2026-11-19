@@ -38,7 +38,16 @@ function App() {
       center: [-81.5, 27.8],
 
       // Initial zoom level.
-      zoom: 6
+      zoom: 6,
+      
+      // Prevent zooming out beyond the initial zoom level.
+      minZoom: 6,
+
+      // Restrict map movement to the Florida region.
+      maxBounds: [
+        [-92, 23.8], // Southwest boundary
+        [-75, 32.5]  // Northeast boundary
+      ]
     })
 
     // Add zoom and compass controls.
