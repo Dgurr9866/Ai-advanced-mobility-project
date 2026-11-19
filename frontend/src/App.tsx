@@ -1,0 +1,58 @@
+// React hooks for managing the map's lifecycle
+// and accessing the HTML container.
+import { useEffect, useRef } from 'react'
+
+// MapLibre library for rendering interactive vector maps.
+import * as maplibregl from 'maplibre-gl'
+
+// Default styling for MapLibre controls and components.
+import 'maplibre-gl/dist/maplibre-gl.css'
+
+// Custom application styling.
+import './App.css'
+
+// Import the background worker used to process map data.
+import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url'
+
+// Configure MapLibre to use the worker bundled by Vite.
+maplibregl.setWorkerUrl(workerUrl)
+
+function App() {
+  // Reference to the HTML element that will contain the map.
+  const mapContainer = useRef<HTMLDivElement>(null)
+
+  // Initialize the map after the component has mounted.
+  useEffect(() => {
+
+    // Ensure the HTML container exists before creating the map.
+    if (!mapContainer.current) return
+
+    // Create the interactive vector map.
+    const map = new maplibregl.Map({
+      container: mapContainer.current,
+
+      // Vector map style provided by OpenFreeMap.
+      style: 'https://tiles.openfreemap.org/styles/positron',
+
+      // Initial map center (longitude, latitude).
+      center: [-81.5, 27.8],
+
+      // Initial zoom level.
+      zoom: 6
+    })
+
+    // Add zoom and compass controls.
+    map.addControl(new maplibregl.NavigationControl())
+
+    // Destroy the map when the component unmounts
+    // to prevent memory and resource leaks.
+    return () => map.remove()
+
+  }, []) // Empty dependency array prevents reinitialization on updates.
+
+  // Render the HTML container for the map.
+  return <div ref={mapContainer} className="map" />
+}
+
+// Export the main application component.
+export default App
