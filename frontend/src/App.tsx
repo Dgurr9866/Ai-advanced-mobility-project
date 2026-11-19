@@ -43,6 +43,27 @@ function App() {
 
     // Add zoom and compass controls.
     map.addControl(new maplibregl.NavigationControl())
+    
+    // Wait for the map to finish loading.
+    map.on('load', () => {
+      
+      // Register Florida's geographical boundary data.
+      map.addSource('florida', {
+        type: 'geojson',
+        data: '/data/florida.geojson'
+      })
+      // Draw an outline around Florida's geographical boundary.
+      map.addLayer({
+        id: 'florida-border',
+        type: 'line',
+        source: 'florida',
+        paint: {
+          'line-color': '#000000',
+          'line-width': 3,
+          'line-opacity': 0.4
+        }
+      })
+    })
 
     // Destroy the map when the component unmounts
     // to prevent memory and resource leaks.
