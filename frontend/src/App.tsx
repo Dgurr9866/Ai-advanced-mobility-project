@@ -73,10 +73,40 @@ function App() {
         }
       })
     })
+  
+  // Wait until the map has finished loading and rendering its tiles.
+  map.once('idle', () => {
+    
+    // Extract city names and coordinates from the visible map features.
+      const cities = map.queryRenderedFeatures(undefined, {
+        layers: ['label_city']
+      })
 
-    // Destroy the map when the component unmounts
-    // to prevent memory and resource leaks.
-    return () => map.remove()
+    console.log('Visible cities:', cities.map(city => ({
+      name: city.properties?.name,
+      coordinates: city.geometry.type === 'Point'
+        ? city.geometry.coordinates
+        : null
+        })))
+  }) // Close the idle event listener.
+  // Detect when the user clicks a city label.
+  map.on('click', 'label_city', (event) => {
+    const city = event.features?.[0]
+
+    if (!city || city.geometry.type !== 'Point') return
+
+    // Extract the selected city's name and coordinates.
+    const name = city.properties?.name
+    const [longitude, latitude] = city.geometry.coordinates
+
+    console.log('Selected city:', {
+      name,
+      latitude,
+      longitude
+    })
+  })
+  // Clean up the map when the component unmounts.
+  return () => map.remove()
 
   }, []) // Empty dependency array prevents reinitialization on updates.
 
