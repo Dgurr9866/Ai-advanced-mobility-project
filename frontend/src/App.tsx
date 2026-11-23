@@ -1,6 +1,6 @@
 // React hooks for managing the map's lifecycle
 // and accessing the HTML container.
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 // MapLibre library for rendering interactive vector maps.
 import * as maplibregl from 'maplibre-gl'
@@ -20,6 +20,11 @@ maplibregl.setWorkerUrl(workerUrl)
 function App() {
   // Reference to the HTML element that will contain the map.
   const mapContainer = useRef<HTMLDivElement>(null)
+
+  // used for weather
+  const mapInstance = useRef<maplibregl.Map | null>(null)
+  const [weatherMode, setWeatherMode] = useState<'simulated' | 'live'>('simulated')
+  const [timeStepHours, setTimeStepHours] = useState<number>(0)
 
   // Initialize the map after the component has mounted.
   useEffect(() => {
@@ -55,6 +60,57 @@ function App() {
     
     // Wait for the map to finish loading.
     map.on('load', () => {
+      //add weather grid 
+      map.addSource('weather-grid', {
+        type: 'geojson',
+        data: {
+          type: 'FeatureCollection',
+          features: [],
+        },
+      })
+
+      map.addLayer({
+        id: 'weather-fill',
+        type: 'fill',
+        source: 'weather-grid',
+        paint: {
+          'fill-color': [
+            'case',
+            // 1. Extreme Storm (Instant/High Crash Zone)
+            ['any', ['>', ['get', 'wind_speed_mph'], 50], ['>', ['get', 'rain_inches_per_hour'], 1.5]],
+            '#a21caf', // Deep Magenta
+
+            // 2. Severe Storm (Crash Threshold in drone.py: >40 mph or >1.0 in/hr)
+            ['any', ['>', ['get', 'wind_speed_mph'], 40], ['>', ['get', 'rain_inches_per_hour'], 1.0]],
+            '#dc2626', // Crimson Red
+
+            // 3. Heavy Squall / High Gusts
+            ['any', ['>', ['get', 'wind_speed_mph'], 33], ['>', ['get', 'rain_inches_per_hour'], 0.65]],
+            '#ea580c', // Dark Orange
+
+            // 4. Strong Wind / Steady Rain
+            ['any', ['>', ['get', 'wind_speed_mph'], 26], ['>', ['get', 'rain_inches_per_hour'], 0.35]],
+            '#f59e0b', // Amber / Light Orange
+
+            // 5. Moderate Wind / Light Rain
+            ['any', ['>', ['get', 'wind_speed_mph'], 20], ['>', ['get', 'rain_inches_per_hour'], 0.15]],
+            '#eab308', // Yellow
+
+            // 6. Fresh Breeze / Drizzle
+            ['any', ['>', ['get', 'wind_speed_mph'], 14], ['>', ['get', 'rain_inches_per_hour'], 0.05]],
+            '#22c55e', // Emerald Green
+
+            // 7. Gentle Breeze
+            ['>', ['get', 'wind_speed_mph'], 8],
+            '#06b6d4', // Cyan / Teal
+
+            // 8. Calm Air
+            '#82b2ff', // Soft Blue
+          ],
+          'fill-opacity': 0.45,
+          'fill-antialias': false,
+        },
+      })
       
       // Register Florida's geographical boundary data.
       map.addSource('florida', {
@@ -72,16 +128,82 @@ function App() {
           'line-opacity': 0.4
         }
       })
+
+      mapInstance.current = map
     })
 
     // Destroy the map when the component unmounts
     // to prevent memory and resource leaks.
-    return () => map.remove()
+    return () => {
+      mapInstance.current = null
+      map.remove()
+    }
 
   }, []) // Empty dependency array prevents reinitialization on updates.
 
+  // contacts the weather api to update the map
+  useEffect(() => {
+    const controller = new AbortController()
+
+    fetch(
+      `http://localhost:8000/api/weather?mode=${weatherMode}&time_step_hours=${timeStepHours}`,
+      { signal: controller.signal }
+    )
+      .then((response) => response.json())
+      .then((weatherGeoJson) => {
+        const source = mapInstance.current?.getSource('weather-grid') as
+          | maplibregl.GeoJSONSource
+          | undefined
+        if (source) {
+          source.setData(weatherGeoJson)
+        }
+      })
+      .catch((error) => {
+        if ((error as Error).name !== 'AbortError') {
+          console.error('Failed to fetch weather layer:', error)
+        }
+      })
+
+    return () => controller.abort()
+  }, [weatherMode, timeStepHours])
+
   // Render the HTML container for the map.
-  return <div ref={mapContainer} className="map" />
+  // extra stuff for weather
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', width: '100vw' }}>
+      <div style={{ display: 'flex', gap: '16px', padding: '10px', backgroundColor: '#1e293b', color: '#fff' }}>
+        <select
+          value={weatherMode}
+          onChange={(event) => {
+            const source = mapInstance.current?.getSource('weather-grid') as
+              | maplibregl.GeoJSONSource
+              | undefined
+            if (source) {
+              source.setData({ type: 'FeatureCollection', features: [] })
+            }
+            setWeatherMode(event.target.value as 'simulated' | 'live')
+          }}
+        >
+          <option value="simulated">Simulated Storms</option>
+          <option value="live">Live Forecast</option>
+        </select>
+
+        <label>
+          Time: +{timeStepHours.toFixed(1)} hrs{' '}
+          <input
+            type="range"
+            min={0}
+            max={6}
+            step={0.5}
+            value={timeStepHours}
+            onChange={(event) => setTimeStepHours(parseFloat(event.target.value))}
+          />
+        </label>
+      </div>
+
+      <div ref={mapContainer} className="map" style={{ flex: 1 }} />
+    </div>
+  )
 }
 
 // Export the main application component.
