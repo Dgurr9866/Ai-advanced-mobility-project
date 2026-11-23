@@ -6,3 +6,12 @@ Stage 2 (Local RL):
 
 Stage 3 (HITL Wrapper): 
 - Connect them so Stage 1 feeds sequential waypoints to Stage 2, and add a simple UI or threshold check that flags the human whenever cross-track deviation or battery drop exceeds limits.
+
+
+Run Server Backend (must be in the same folder as api_server.py, backend folder)
+
+```uvicorn api_server:app --reload --port 8000```
+
+Run Frontend (should be in the frontend folder)
+
+```npm run dev```

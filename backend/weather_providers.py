@@ -18,6 +18,70 @@ class BaseWeatherProvider(ABC):
         pass
 
 
+#this function is just on the script, given the chosen weather provider will create a geojson theat the 
+#frontend can use
+def export_weather_grid_geojson(
+    weather_provider,
+    time_step_hours: float = 0.0,
+    cell_size_miles: float = 10.0,
+) -> dict:
+    """
+    Samples any BaseWeatherProvider across Florida and returns a GeoJSON FeatureCollection
+    of square grid cells ready for Leaflet / Mapbox / MapLibre in React.
+    """
+    average_florida_latitude = 28.0
+    latitude_step = cell_size_miles / 69.0
+    longitude_step = cell_size_miles / (69.0 * math.cos(math.radians(average_florida_latitude)))
+
+    half_latitude_step = latitude_step / 2.0
+    half_longitude_step = longitude_step / 2.0
+
+    longitudes = np.arange(-87.7, -79.9, longitude_step)
+    latitudes = np.arange(24.5, 31.1, latitude_step)
+
+    features = []
+    for latitude in latitudes:
+        for longitude in longitudes:
+            weather = weather_provider.get_weather_at(
+                float(longitude), float(latitude), time_step_hours
+            )
+
+            # Skip calm cells so the frontend stays fast and clear sky remains transparent
+            # Show any cell with at least a 5 mph breeze or light rain
+            # Only skip near-zero wind & dry cells (or remove this block to color the whole grid)
+            if (
+                weather["rain_inches_per_hour"] < 0.01
+                and weather["wind_speed_mph"] < 2.0
+            ):
+                continue
+
+            # Build a GeoJSON Polygon square around (longitude, latitude)
+            polygon_coordinates = [[
+                [float(longitude - half_longitude_step), float(latitude - half_latitude_step)],
+                [float(longitude + half_longitude_step), float(latitude - half_latitude_step)],
+                [float(longitude + half_longitude_step), float(latitude + half_latitude_step)],
+                [float(longitude - half_longitude_step), float(latitude + half_latitude_step)],
+                [float(longitude - half_longitude_step), float(latitude - half_latitude_step)],
+            ]]
+
+            features.append({
+                "type": "Feature",
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": polygon_coordinates,
+                },
+                "properties": {
+                    "wind_speed_mph": round(weather["wind_speed_mph"], 1),
+                    "wind_direction_degrees": round(weather["wind_direction_degrees"], 1),
+                    "rain_inches_per_hour": round(weather["rain_inches_per_hour"], 2),
+                },
+            })
+
+    return {
+        "type": "FeatureCollection",
+        "features": features,
+    }
+
 
 import math
 import numpy as np
@@ -37,7 +101,7 @@ class SimulatedFloridaWeather(BaseWeatherProvider):
         self.storms = storms or []
 
     @classmethod
-    def generate_random_scenario(cls, num_storms: int = 4):
+    def generate_random_scenario(cls, num_storms: int = 10):
         """Spawns random moving thunderstorms inside Florida's bounding box."""
         storms = []
         for _ in range(num_storms):
@@ -118,35 +182,32 @@ class SimulatedFloridaWeather(BaseWeatherProvider):
 
 
 
+import math
 import requests
 import numpy as np
-from scipy.interpolate import LinearNDInterpolator
+from scipy.interpolate import RegularGridInterpolator
 
 
 class LiveFloridaWeather(BaseWeatherProvider):
-    #creates a bounding box of florida and builds interpolators form api
-    def __init__(self, grid_spacing_degrees: float = 0.25):
-        """
-        Fetches a live weather grid covering Florida (~15-mile spacing)
-        and builds fast spatial interpolators for instant coordinate queries.
-        """
-        # Florida bounding box
-        longitudes = np.arange(-87.7, -79.9, grid_spacing_degrees)
-        latitudes = np.arange(24.5, 31.1, grid_spacing_degrees)
-        mesh_longitude, mesh_latitude = np.meshgrid(longitudes, latitudes)
+    def __init__(self, grid_spacing_degrees: float = 0.5):
+        # 0.5° (~35 miles) = ~210 points total (well within Open-Meteo limits)
+        self.grid_longitudes = np.arange(-87.7, -79.8, grid_spacing_degrees)
+        self.grid_latitudes = np.arange(24.5, 31.2, grid_spacing_degrees)
 
-        flat_longitudes = mesh_longitude.ravel()
-        flat_latitudes = mesh_latitude.ravel()
-
-        self._fetch_and_build_interpolators(flat_longitudes, flat_latitudes)
+        mesh_longitude, mesh_latitude = np.meshgrid(
+            self.grid_longitudes, self.grid_latitudes
+        )
+        self._fetch_and_build_interpolators(
+            mesh_longitude.ravel(), mesh_latitude.ravel()
+        )
 
     def _fetch_and_build_interpolators(
-        self, longitudes: np.ndarray, latitudes: np.ndarray
+        self, flat_longitudes: np.ndarray, flat_latitudes: np.ndarray
     ):
         url = "https://api.open-meteo.com/v1/forecast"
         params = {
-            "latitude": ",".join(f"{lat:.4f}" for lat in latitudes),
-            "longitude": ",".join(f"{lon:.4f}" for lon in longitudes),
+            "latitude": ",".join(f"{lat:.4f}" for lat in flat_latitudes),
+            "longitude": ",".join(f"{lon:.4f}" for lon in flat_longitudes),
             "hourly": "wind_speed_80m,wind_direction_80m,precipitation",
             "wind_speed_unit": "mph",
             "precipitation_unit": "inch",
@@ -158,9 +219,9 @@ class LiveFloridaWeather(BaseWeatherProvider):
         response.raise_for_status()
         data = response.json()
 
-        points = np.column_stack((longitudes, latitudes))
+        grid_shape = (len(self.grid_latitudes), len(self.grid_longitudes))
+        axes = (self.grid_latitudes, self.grid_longitudes)
 
-        # Store hourly interpolators (hour 0 = current hour, hour 1 = +1 hr, etc.)
         self.wind_speed_interpolators = []
         self.wind_direction_u_interpolators = []
         self.wind_direction_v_interpolators = []
@@ -172,23 +233,31 @@ class LiveFloridaWeather(BaseWeatherProvider):
             wind_speeds = np.array(
                 [item["hourly"]["wind_speed_80m"][hour_index] for item in data],
                 dtype=float,
-            )
+            ).reshape(grid_shape)
+
             wind_directions_rad = np.radians(
                 [item["hourly"]["wind_direction_80m"][hour_index] for item in data]
             )
+            wind_u = np.cos(wind_directions_rad).reshape(grid_shape)
+            wind_v = np.sin(wind_directions_rad).reshape(grid_shape)
+
             rain_values = np.array(
                 [item["hourly"]["precipitation"][hour_index] for item in data],
                 dtype=float,
+            ).reshape(grid_shape)
+
+            self.wind_speed_interpolators.append(
+                RegularGridInterpolator(axes, wind_speeds, bounds_error=False, fill_value=None)
             )
-
-            # Interpolate wind direction via unit vectors (avoids 359° -> 1° wrap-around bugs)
-            wind_u = np.cos(wind_directions_rad)
-            wind_v = np.sin(wind_directions_rad)
-
-            self.wind_speed_interpolators.append(LinearNDInterpolator(points, wind_speeds))
-            self.wind_direction_u_interpolators.append(LinearNDInterpolator(points, wind_u))
-            self.wind_direction_v_interpolators.append(LinearNDInterpolator(points, wind_v))
-            self.rain_interpolators.append(LinearNDInterpolator(points, rain_values))
+            self.wind_direction_u_interpolators.append(
+                RegularGridInterpolator(axes, wind_u, bounds_error=False, fill_value=None)
+            )
+            self.wind_direction_v_interpolators.append(
+                RegularGridInterpolator(axes, wind_v, bounds_error=False, fill_value=None)
+            )
+            self.rain_interpolators.append(
+                RegularGridInterpolator(axes, rain_values, bounds_error=False, fill_value=None)
+            )
 
     def get_weather_at(
         self, longitude: float, latitude: float, time_step_hours: float = 0.0
@@ -197,7 +266,8 @@ class LiveFloridaWeather(BaseWeatherProvider):
             max(int(round(time_step_hours)), 0),
             len(self.wind_speed_interpolators) - 1,
         )
-        query_point = np.array([[longitude, latitude]])
+        # RegularGridInterpolator expects (latitude, longitude) order to match `axes`
+        query_point = np.array([[latitude, longitude]])
 
         wind_speed = float(self.wind_speed_interpolators[hour_index](query_point)[0])
         wind_u = float(self.wind_direction_u_interpolators[hour_index](query_point)[0])
@@ -207,7 +277,7 @@ class LiveFloridaWeather(BaseWeatherProvider):
         wind_direction_degrees = (math.degrees(math.atan2(wind_v, wind_u)) + 360) % 360
 
         return {
-            "wind_speed_mph": wind_speed,
+            "wind_speed_mph": max(wind_speed, 0.0),
             "wind_direction_degrees": wind_direction_degrees,
-            "rain_inches_per_hour": rain,
+            "rain_inches_per_hour": max(rain, 0.0),
         }
