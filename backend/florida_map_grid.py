@@ -1,9 +1,9 @@
 import json
-import math
 import numpy as np
-from shapely.geometry import shape, Point, box
+from shapely.geometry import shape, Point
 from shapely.ops import unary_union
 from shapely.prepared import prep
+from geo_utils import FLORIDA_BOUNDS, miles_to_degree_steps, calculate_headwind_mph
 
 
 class FloridaAirspaceGrid:
@@ -41,15 +41,10 @@ class FloridaAirspaceGrid:
         prepared_airspace = prep(valid_airspace_polygon)
 
         # 3. Generate uniform mile-based grid and filter out Ocean + No-Fly Zones
-        average_florida_latitude = 28.0
-        self.latitude_step = cell_size_miles / 69.0
-        self.longitude_step = cell_size_miles / (
-            69.0 * math.cos(math.radians(average_florida_latitude))
-        )
+        self.longitude_step, self.latitude_step = miles_to_degree_steps(cell_size_miles)
 
-        longitudes = np.arange(-87.7, -79.8, self.longitude_step)
-        latitudes = np.arange(24.5, 31.2, self.latitude_step)
-
+        longitudes = np.arange(FLORIDA_BOUNDS["min_lon"], FLORIDA_BOUNDS["max_lon"], self.longitude_step)
+        latitudes = np.arange(FLORIDA_BOUNDS["min_lat"], FLORIDA_BOUNDS["max_lat"], self.latitude_step)
         self.cells = {}  # Maps (row_index, column_index) -> cell metadata dict
 
         for row_index, latitude in enumerate(latitudes):
@@ -132,10 +127,9 @@ class FloridaAirspaceGrid:
 
         # Add directional headwind penalty if travel heading is known (for Dijkstra/A* edges)
         if heading_degrees is not None:
-            wind_angle_diff = math.radians(
-                weather["wind_direction_degrees"] - heading_degrees
+            headwind_mph = calculate_headwind_mph(
+                wind_speed_mph, weather["wind_direction_degrees"], heading_degrees
             )
-            headwind_mph = wind_speed_mph * math.cos(wind_angle_diff)
             if headwind_mph > 0:
                 danger += headwind_mph * 0.5
 

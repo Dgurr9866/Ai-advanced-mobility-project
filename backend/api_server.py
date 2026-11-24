@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from weather_providers import SimulatedFloridaWeather, LiveFloridaWeather
 from florida_map_grid import FloridaAirspaceGrid
+from geo_utils import FLORIDA_GEOJSON_PATH, NO_FLY_ZONES_GEOJSON_PATH
 
 app = FastAPI()
 
@@ -14,8 +15,8 @@ app.add_middleware(
 
 # Load Florida landmass & subtract FAA Restricted/Prohibited No-Fly Zones once on startup
 airspace_grid = FloridaAirspaceGrid(
-    florida_geojson_path="../frontend/public/data/florida.geojson",
-    no_fly_zones_geojson_path="../frontend/public/data/no_fly_zones.geojson",
+    florida_geojson_path=FLORIDA_GEOJSON_PATH,
+    no_fly_zones_geojson_path=NO_FLY_ZONES_GEOJSON_PATH,
     cell_size_miles=5.0,
 )
 

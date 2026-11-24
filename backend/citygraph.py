@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from math import radians, sin, cos, sqrt, atan2
+from geo_utils import haversine_miles
 
 #give dataclass decorator for creating data classes
 @dataclass
@@ -24,38 +25,16 @@ class CityGraph:
     # Connect two cities with an undirected, weighted edge.
     def add_edge(self, city1: str, city2: str) -> None:
         # Calculate the distance between the cities in miles.
-        distance = calculate_distance(
-            self.cities[city1],
-            self.cities[city2]
+        distance = haversine_miles(
+            self.cities[city1].longitude,
+            self.cities[city1].latitude,
+            self.cities[city2].longitude,
+            self.cities[city2].latitude
         )
 
         # Add connections in both directions.
         self.edges[city1][city2] = distance
         self.edges[city2][city1] = distance     
-        
-# Calculate the straight-line distance between two cities in miles.
-def calculate_distance(city1: City, city2: City) -> float:
-    lat1 = radians(city1.latitude)
-    lon1 = radians(city1.longitude)
-
-    lat2 = radians(city2.latitude)
-    lon2 = radians(city2.longitude)
-
-    # Calculate the differences in latitude and longitude.
-    delta_lat = lat2 - lat1
-    delta_lon = lon2 - lon1
-    
-    # Calculate the Haversine value.
-    a = sin(delta_lat / 2)**2 + cos(lat1) * cos(lat2) * sin(delta_lon / 2)**2
-    
-    # Calculate the central angle between the two cities.
-    c = 2 * atan2(sqrt(a), sqrt(1 - a))
-
-    # Earth's approximate radius in miles.
-    earth_radius = 3958.8
-
-    # Return the distance in miles.
-    return earth_radius * c
 
 if __name__ == "__main__":
     tampa = City("Tampa", 27.9506, -82.4572)

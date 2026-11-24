@@ -1,4 +1,9 @@
 from abc import ABC, abstractmethod
+from geo_utils import haversine_miles, FLORIDA_BOUNDS
+import math
+import requests
+import numpy as np
+from scipy.interpolate import RegularGridInterpolator
 
 
 #an abstract slass that implements the function that all weather will use (simulated or real)
@@ -16,11 +21,7 @@ class BaseWeatherProvider(ABC):
         }
         """
         pass
-
-
-import math
-import numpy as np
-
+    
 
 #simulates florida weather for easy training 
 class SimulatedFloridaWeather(BaseWeatherProvider):
@@ -42,8 +43,10 @@ class SimulatedFloridaWeather(BaseWeatherProvider):
         for _ in range(num_storms):
             storms.append(
                 {
+                    #these values must be changed to avoid all the storms only in the oceans
                     "start_longitude": np.random.uniform(-87.5, -80.1),
                     "start_latitude": np.random.uniform(25.2, 30.8),
+
                     "velocity_longitude_per_hour": np.random.uniform(-0.15, 0.25),
                     "velocity_latitude_per_hour": np.random.uniform(-0.15, 0.25),
                     "radius_miles": np.random.uniform(12.0, 35.0),
@@ -58,21 +61,6 @@ class SimulatedFloridaWeather(BaseWeatherProvider):
             base_wind_direction_degrees=np.random.uniform(0.0, 360.0),
             storms=storms,
         )
-
-    #distance calculated for internal use
-    def _miles_between(
-        self, longitude_1: float, latitude_1: float, longitude_2: float, latitude_2: float
-    ) -> float:
-        earth_radius_miles = 3958.8
-        delta_latitude = math.radians(latitude_2 - latitude_1)
-        delta_longitude = math.radians(longitude_2 - longitude_1)
-        a = (
-            math.sin(delta_latitude / 2) ** 2
-            + math.cos(math.radians(latitude_1))
-            * math.cos(math.radians(latitude_2))
-            * math.sin(delta_longitude / 2) ** 2
-        )
-        return 2 * earth_radius_miles * math.asin(math.sqrt(a))
 
     #inside a grid gets the weather returning the windspeed, direction, and rain
     def get_weather_at(
@@ -93,7 +81,7 @@ class SimulatedFloridaWeather(BaseWeatherProvider):
                 + storm["velocity_latitude_per_hour"] * time_step_hours
             )
 
-            distance_miles = self._miles_between(
+            distance_miles = haversine_miles(
                 longitude, latitude, current_storm_longitude, current_storm_latitude
             )
 
@@ -116,18 +104,12 @@ class SimulatedFloridaWeather(BaseWeatherProvider):
 
 
 
-
-import math
-import requests
-import numpy as np
-from scipy.interpolate import RegularGridInterpolator
-
-
 class LiveFloridaWeather(BaseWeatherProvider):
     def __init__(self, grid_spacing_degrees: float = 0.5):
         # 0.5° (~35 miles) = ~210 points total (well within Open-Meteo limits)
-        self.grid_longitudes = np.arange(-87.7, -79.8, grid_spacing_degrees)
-        self.grid_latitudes = np.arange(24.5, 31.2, grid_spacing_degrees)
+        #set thes values to the florida bounds to get the weather for the entire state
+        self.grid_longitudes = np.arange(FLORIDA_BOUNDS["min_longitude"], FLORIDA_BOUNDS["max_longitude"], grid_spacing_degrees)
+        self.grid_latitudes = np.arange(FLORIDA_BOUNDS["min_latitude"], FLORIDA_BOUNDS["max_latitude"], grid_spacing_degrees)
 
         mesh_longitude, mesh_latitude = np.meshgrid(
             self.grid_longitudes, self.grid_latitudes
