@@ -1,9 +1,14 @@
 from abc import ABC, abstractmethod
-from geo_utils import haversine_miles, FLORIDA_BOUNDS
-import math
 import requests
+import json
+import math
 import numpy as np
+from scipy.ndimage import gaussian_filter
 from scipy.interpolate import RegularGridInterpolator
+from shapely.geometry import shape, Point
+from shapely.ops import unary_union
+from shapely.prepared import prep
+from geo_utils import haversine_miles, FLORIDA_BOUNDS, FLORIDA_GEOJSON_PATH
 
 
 #an abstract slass that implements the function that all weather will use (simulated or real)
@@ -21,57 +26,147 @@ class BaseWeatherProvider(ABC):
         }
         """
         pass
-    
+
 
 #simulates florida weather for easy training 
+def _generate_3d_fractal_noise(
+    shape_3d: tuple[int, int, int],
+    octaves: list[tuple[float, float]] = ((4.0, 0.65), (1.8, 0.35)),
+    seed: int = None,
+) -> np.ndarray:
+    """
+    Generates smooth, zero-mean, unit-variance 3D Perlin-style fractal noise
+    over (time, latitude, longitude) using multi-scale Gaussian-filtered fields.
+    """
+    rng = np.random.default_rng(seed)
+    combined = np.zeros(shape_3d, dtype=np.float64)
+
+    for sigma, weight in octaves:
+        raw = rng.standard_normal(shape_3d)
+        # Smooth more strongly along time (axis 0) so weather evolves gradually
+        smoothed = gaussian_filter(raw, sigma=(sigma * 0.6, sigma, sigma), mode="nearest")
+        std = np.std(smoothed)
+        if std > 1e-8:
+            smoothed /= std
+        combined += weight * smoothed
+
+    combined /= np.std(combined) + 1e-8
+    return combined
+
+
 class SimulatedFloridaWeather(BaseWeatherProvider):
     def __init__(
         self,
         base_wind_speed_mph: float = 12.0,
-        base_wind_direction_degrees: float = 110.0,  # Typical SE Florida sea breeze
+        base_wind_direction_degrees: float = 110.0,
         storms: list = None,
+        seed: int = None,
     ):
         self.base_wind_speed_mph = base_wind_speed_mph
         self.base_wind_direction_degrees = base_wind_direction_degrees
-        # Each storm is a dict defining start position, velocity (deg/hr), radius (miles), and peak intensity
         self.storms = storms or []
 
+        # Build a 3D (time, latitude, longitude) noise grid covering Florida + 6-hour window
+        self.noise_times = np.linspace(0.0, 6.0, 13)  # Every 0.5 hours
+        self.noise_latitudes = np.linspace(
+            FLORIDA_BOUNDS["min_latitude"], FLORIDA_BOUNDS["max_latitude"], 56
+        )
+        self.noise_longitudes = np.linspace(
+            FLORIDA_BOUNDS["min_longitude"], FLORIDA_BOUNDS["max_longitude"], 64
+        )
+        grid_shape = (
+            len(self.noise_times),
+            len(self.noise_latitudes),
+            len(self.noise_longitudes),
+        )
+        axes = (self.noise_times, self.noise_latitudes, self.noise_longitudes)
+
+        speed_field = _generate_3d_fractal_noise(grid_shape, seed=seed)
+        angle_field = _generate_3d_fractal_noise(
+            grid_shape, seed=None if seed is None else seed + 1
+        )
+        moisture_field = _generate_3d_fractal_noise(
+            grid_shape, seed=None if seed is None else seed + 2
+        )
+
+        self.speed_noise_interp = RegularGridInterpolator(
+            axes, speed_field, bounds_error=False, fill_value=None
+        )
+        self.angle_noise_interp = RegularGridInterpolator(
+            axes, angle_field, bounds_error=False, fill_value=None
+        )
+        self.moisture_noise_interp = RegularGridInterpolator(
+            axes, moisture_field, bounds_error=False, fill_value=None
+        )
+
     @classmethod
-    def generate_random_scenario(cls, num_storms: int = 10):
-        """Spawns random moving thunderstorms inside Florida's bounding box."""
+    def generate_random_scenario(
+        cls,
+        num_storms: int = 6,
+        florida_geojson_path: str = str(FLORIDA_GEOJSON_PATH),
+        seed: int = None,
+    ):
+        """Spawns random moving thunderstorms strictly inside Florida's landmass polygon."""
+        rng = np.random.default_rng(seed)
+
+        with open(florida_geojson_path, "r") as file:
+            florida_data = json.load(file)
+        florida_landmass = unary_union(
+            [shape(feature["geometry"]) for feature in florida_data["features"]]
+        )
+        prepared_florida = prep(florida_landmass)
+        min_lon, min_lat, max_lon, max_lat = florida_landmass.bounds
+
         storms = []
-        for _ in range(num_storms):
+        attempts = 0
+        while len(storms) < num_storms and attempts < num_storms * 50:
+            attempts += 1
+            candidate_lon = float(rng.uniform(min_lon, max_lon))
+            candidate_lat = float(rng.uniform(min_lat, max_lat))
+
+            # Reject points in the Gulf of Mexico or Atlantic Ocean
+            if not prepared_florida.contains(Point(candidate_lon, candidate_lat)):
+                continue
+
             storms.append(
                 {
-                    #these values must be changed to avoid all the storms only in the oceans
-                    "start_longitude": np.random.uniform(-87.5, -80.1),
-                    "start_latitude": np.random.uniform(25.2, 30.8),
-
-                    "velocity_longitude_per_hour": np.random.uniform(-0.15, 0.25),
-                    "velocity_latitude_per_hour": np.random.uniform(-0.15, 0.25),
-                    "radius_miles": np.random.uniform(12.0, 35.0),
-                    "peak_wind_mph": np.random.uniform(35.0, 60.0),
-                    "peak_rain_inches_per_hour": np.random.uniform(0.8, 2.2),
+                    "start_longitude": candidate_lon,
+                    "start_latitude": candidate_lat,
+                    "velocity_longitude_per_hour": float(rng.uniform(-0.12, 0.20)),
+                    "velocity_latitude_per_hour": float(rng.uniform(-0.12, 0.20)),
+                    "radius_miles": float(rng.uniform(14.0, 32.0)),
+                    "peak_wind_mph": float(rng.uniform(36.0, 58.0)),
+                    "peak_rain_inches_per_hour": float(rng.uniform(0.8, 2.2)),
                 }
             )
 
-        #retruns the storms with a random base wind speed and direction
         return cls(
-            base_wind_speed_mph=np.random.uniform(5.0, 18.0),
-            base_wind_direction_degrees=np.random.uniform(0.0, 360.0),
+            base_wind_speed_mph=float(rng.uniform(8.0, 16.0)),
+            base_wind_direction_degrees=float(rng.uniform(0.0, 360.0)),
             storms=storms,
+            seed=seed,
         )
 
-    #inside a grid gets the weather returning the windspeed, direction, and rain
     def get_weather_at(
         self, longitude: float, latitude: float, time_step_hours: float = 0.0
     ) -> dict:
-        wind_speed_mph = self.base_wind_speed_mph
-        wind_direction_degrees = self.base_wind_direction_degrees
-        rain_inches_per_hour = 0.0
+        query = np.array([[time_step_hours, latitude, longitude]])
 
+        # 1. Underlying Perlin-style wind & moisture field across all of Florida
+        speed_noise = float(self.speed_noise_interp(query)[0])
+        angle_noise = float(self.angle_noise_interp(query)[0])
+        moisture_noise = float(self.moisture_noise_interp(query)[0])
+
+        wind_speed_mph = max(2.0, self.base_wind_speed_mph + speed_noise * 5.5)
+        wind_direction_degrees = (
+            self.base_wind_direction_degrees + angle_noise * 35.0
+        ) % 360.0
+
+        # Broad light-rain / drizzle bands where moisture_noise > 0.85
+        rain_inches_per_hour = max(0.0, (moisture_noise - 0.85) * 0.22)
+
+        # 2. Layer localized severe storm cells on top of the underlying field
         for storm in self.storms:
-            # Move storm center forward in time
             current_storm_longitude = (
                 storm["start_longitude"]
                 + storm["velocity_longitude_per_hour"] * time_step_hours
@@ -85,16 +180,17 @@ class SimulatedFloridaWeather(BaseWeatherProvider):
                 longitude, latitude, current_storm_longitude, current_storm_latitude
             )
 
-            # Gaussian falloff from storm center
             if distance_miles < storm["radius_miles"] * 2.0:
                 intensity = math.exp(
                     -0.5 * (distance_miles / (storm["radius_miles"] * 0.5)) ** 2
                 )
-                wind_speed_mph += (storm["peak_wind_mph"] - self.base_wind_speed_mph) * intensity
+                wind_speed_mph += max(
+                    0.0, (storm["peak_wind_mph"] - wind_speed_mph) * intensity
+                )
                 rain_inches_per_hour += storm["peak_rain_inches_per_hour"] * intensity
-
-                # Add rotational gust shift near storm core
-                wind_direction_degrees = (wind_direction_degrees + 45.0 * intensity) % 360
+                wind_direction_degrees = (
+                    wind_direction_degrees + 45.0 * intensity
+                ) % 360.0
 
         return {
             "wind_speed_mph": float(wind_speed_mph),

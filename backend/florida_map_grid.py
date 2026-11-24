@@ -43,8 +43,8 @@ class FloridaAirspaceGrid:
         # 3. Generate uniform mile-based grid and filter out Ocean + No-Fly Zones
         self.longitude_step, self.latitude_step = miles_to_degree_steps(cell_size_miles)
 
-        longitudes = np.arange(FLORIDA_BOUNDS["min_lon"], FLORIDA_BOUNDS["max_lon"], self.longitude_step)
-        latitudes = np.arange(FLORIDA_BOUNDS["min_lat"], FLORIDA_BOUNDS["max_lat"], self.latitude_step)
+        longitudes = np.arange(FLORIDA_BOUNDS["min_longitude"], FLORIDA_BOUNDS["max_longitude"], self.longitude_step)
+        latitudes = np.arange(FLORIDA_BOUNDS["min_latitude"], FLORIDA_BOUNDS["max_latitude"], self.latitude_step)
         self.cells = {}  # Maps (row_index, column_index) -> cell metadata dict
 
         for row_index, latitude in enumerate(latitudes):

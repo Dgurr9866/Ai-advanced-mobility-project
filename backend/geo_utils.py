@@ -18,11 +18,11 @@ NO_FLY_ZONES_GEOJSON_PATH = DATA_DIR / "no_fly_zones.geojson"
 # --- Shared Geographic Constants ---
 EARTH_RADIUS_MILES = 3958.8
 FLORIDA_BOUNDS = {
-    "min_lon": -87.7,
-    "max_lon": -79.8,
-    "min_lat": 24.5,
-    "max_lat": 31.2,
-    "avg_lat": 28.0,
+    "min_longitude": -87.7,
+    "max_longitude": -79.8,
+    "min_latitude": 24.5,
+    "max_latitude": 31.2,
+    "avg_latitude": 28.0,
 }
 
 
@@ -30,7 +30,7 @@ def miles_to_degree_steps(cell_size_miles: float) -> tuple[float, float]:
     """Converts a uniform mile spacing into (longitude_step_deg, latitude_step_deg) at FL's latitude."""
     latitude_step_deg = cell_size_miles / 69.0
     longitude_step_deg = cell_size_miles / (
-        69.0 * math.cos(math.radians(FLORIDA_BOUNDS["avg_lat"]))
+        69.0 * math.cos(math.radians(FLORIDA_BOUNDS["avg_latitude"]))
     )
     return longitude_step_deg, latitude_step_deg
 
