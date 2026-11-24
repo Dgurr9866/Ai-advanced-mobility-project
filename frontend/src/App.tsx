@@ -76,36 +76,21 @@ function App() {
         paint: {
           'fill-color': [
             'case',
-            // 1. Extreme Storm (Instant/High Crash Zone)
-            ['any', ['>', ['get', 'wind_speed_mph'], 50], ['>', ['get', 'rain_inches_per_hour'], 1.5]],
-            '#a21caf', // Deep Magenta
-
-            // 2. Severe Storm (Crash Threshold in drone.py: >40 mph or >1.0 in/hr)
-            ['any', ['>', ['get', 'wind_speed_mph'], 40], ['>', ['get', 'rain_inches_per_hour'], 1.0]],
-            '#dc2626', // Crimson Red
-
-            // 3. Heavy Squall / High Gusts
-            ['any', ['>', ['get', 'wind_speed_mph'], 33], ['>', ['get', 'rain_inches_per_hour'], 0.65]],
-            '#ea580c', // Dark Orange
-
-            // 4. Strong Wind / Steady Rain
-            ['any', ['>', ['get', 'wind_speed_mph'], 26], ['>', ['get', 'rain_inches_per_hour'], 0.35]],
-            '#f59e0b', // Amber / Light Orange
-
-            // 5. Moderate Wind / Light Rain
-            ['any', ['>', ['get', 'wind_speed_mph'], 20], ['>', ['get', 'rain_inches_per_hour'], 0.15]],
-            '#eab308', // Yellow
-
-            // 6. Fresh Breeze / Drizzle
-            ['any', ['>', ['get', 'wind_speed_mph'], 14], ['>', ['get', 'rain_inches_per_hour'], 0.05]],
-            '#22c55e', // Emerald Green
-
-            // 7. Gentle Breeze
-            ['>', ['get', 'wind_speed_mph'], 8],
-            '#06b6d4', // Cyan / Teal
-
-            // 8. Calm Air
-            '#82b2ff', // Soft Blue
+            ['>=', ['get', 'danger_value'], 500],
+            '#a21caf', // Deep Magenta: Severe Storm Crash Zone
+            ['>', ['get', 'danger_value'], 40],
+            '#dc2626', // Crimson Red: Extreme Risk
+            ['>', ['get', 'danger_value'], 28],
+            '#ea580c', // Dark Orange: High Risk
+            ['>', ['get', 'danger_value'], 20],
+            '#f59e0b', // Amber: Elevated Risk / Near NFZ Border
+            ['>', ['get', 'danger_value'], 14],
+            '#eab308', // Yellow: Moderate Breeze / Light Rain
+            ['>', ['get', 'danger_value'], 9],
+            '#22c55e', // Emerald Green: Low Risk
+            ['>', ['get', 'danger_value'], 5],
+            '#06b6d4', // Cyan: Gentle Breeze
+            '#3b82f6', // Soft Blue: Calm / Optimal Airspace
           ],
           'fill-opacity': 0.45,
           'fill-antialias': false,
