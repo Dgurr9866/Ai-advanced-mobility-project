@@ -72,6 +72,38 @@ function App() {
           'line-opacity': 0.4
         }
       })
+	// Request the test route from the Python backend
+fetch('http://localhost:8000/routes/test')
+  .then(response => {
+    if (!response.ok) {
+      throw new Error('Failed to fetch route')
+    }
+    return response.json()
+  })
+  .then(route => {
+
+    // Add the route data to MapLibre
+    map.addSource('test-route', {
+      type: 'geojson',
+      data: route
+    })
+
+    // Draw the route as a red line
+    map.addLayer({
+      id: 'test-route-line',
+      type: 'line',
+      source: 'test-route',
+      paint: {
+        'line-color': '#FF0000',
+        'line-width': 4
+      }
+    })
+
+    console.log('Drone route loaded:', route)
+  })
+  .catch(error => {
+    console.error('Error loading drone route:', error)
+  })
     })
 
     // Destroy the map when the component unmounts
