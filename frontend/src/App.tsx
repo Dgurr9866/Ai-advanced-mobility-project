@@ -27,6 +27,13 @@ function App() {
   const [weatherMode, setWeatherMode] = useState<'simulated' | 'live'>('simulated')
   const [timeStepHours, setTimeStepHours] = useState<number>(0)
 
+  // variables for route planning
+  // goal points are temporarily hardcoded for testing purposes
+  const [startPoint, setStartPoint] = useState<[number, number]>([-81.3792, 28.5383]) // Orlando
+  const [goalPoint, setGoalPoint] = useState<[number, number]>([-82.4572, 27.9506])   // Tampa
+  const [clickTarget, setClickTarget] = useState<'start' | 'goal'>('goal')
+  const [routeStats, setRouteStats] = useState<{ distance_miles?: number; max_danger?: number } | null>(null)
+
   // Initialize the map after the component has mounted.
   useEffect(() => {
 
@@ -61,6 +68,23 @@ function App() {
     
     // Wait for the map to finish loading.
     map.on('load', () => {
+      // Add a source for the planned route, initially empty.
+      map.addSource('planned-route', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+      })
+
+      // Draw the planned route as a black line.
+      map.addLayer({
+        id: 'planned-route-line',
+        type: 'line',
+        source: 'planned-route',
+        paint: {
+          'line-color': '#111827',
+          'line-width': 4,
+        },
+      })
+
       //add weather grid 
       map.addSource('weather-grid', {
         type: 'geojson',
@@ -192,6 +216,42 @@ function App() {
 
     return () => controller.abort()
   }, [weatherMode, timeStepHours])
+
+  // handles the route planning api call and updates the map with the new route
+  useEffect(() => {
+    const controller = new AbortController()
+    const params = new URLSearchParams({
+      start_lon: String(startPoint[0]),
+      start_lat: String(startPoint[1]),
+      goal_lon: String(goalPoint[0]),
+      goal_lat: String(goalPoint[1]),
+      mode: weatherMode,
+      time_step_hours: String(timeStepHours),
+    })
+
+    fetch(`http://localhost:8000/api/route?${params.toString()}`, {
+      signal: controller.signal,
+    })
+      .then((res) => res.json())
+      .then((routeFeature) => {
+        if (routeFeature?.geometry) {
+          setRouteStats(routeFeature.properties)
+          const source = mapInstance.current?.getSource('planned-route') as
+            | maplibregl.GeoJSONSource
+            | undefined
+          if (source) {
+            source.setData(routeFeature)
+          }
+        }
+      })
+      .catch((err) => {
+        if ((err as Error).name !== 'AbortError') {
+          console.error('Route error:', err)
+        }
+      })
+
+    return () => controller.abort()
+  }, [startPoint, goalPoint, weatherMode, timeStepHours])
 
   // Render the HTML container for the map.
   // extra stuff for weather
