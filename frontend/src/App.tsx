@@ -21,6 +21,27 @@ function App() {
   // Reference to the HTML element that will contain the map.
   const mapContainer = useRef<HTMLDivElement>(null)
 
+  //shared colors for the key and map
+  const DANGER_COLOR_STOPS: Array<[number, string, string]> = [
+    [500, '#701a75', 'Crash Zone (500+)'],
+    [100, '#991b1b', 'Extreme (100)'],
+    [40,  '#ef4444', 'Severe (40)'],
+    [25,  '#f97316', 'High Penalty (25)'],
+    [15,  '#eab308', 'Moderate (15)'],
+    [8,   '#84cc16', 'Low Risk (8)'],
+    [0,   '#10b981', 'Optimal (0)'],
+  ]
+
+  // Ascending stops for MapLibre ['interpolate', ...]
+  const ASCENDING_INTERPOLATE_STOPS = [...DANGER_COLOR_STOPS]
+    .reverse()
+    .flatMap(([value, color]) => [value, color]) as [number | string, ...(number | string)[]]
+
+  // Top-to-bottom CSS gradient string derived from DANGER_COLOR_STOPS
+  const LEGEND_GRADIENT = `linear-gradient(to bottom, ${DANGER_COLOR_STOPS.map(
+    ([, color], index) => `${color} ${(index / (DANGER_COLOR_STOPS.length - 1)) * 100}%`
+  ).join(', ')})`
+
   // used for weather
   const mapInstance = useRef<maplibregl.Map | null>(null)
   const latestWeatherRef = useRef<maplibregl.GeoJSONSourceSpecification['data'] | null>(null)
@@ -100,22 +121,10 @@ function App() {
         source: 'weather-grid',
         paint: {
           'fill-color': [
-            'case',
-            ['>=', ['get', 'danger_value'], 500],
-            '#a21caf', // Deep Magenta: Severe Storm Crash Zone
-            ['>', ['get', 'danger_value'], 40],
-            '#dc2626', // Crimson Red: Extreme Risk
-            ['>', ['get', 'danger_value'], 28],
-            '#ea580c', // Dark Orange: High Risk
-            ['>', ['get', 'danger_value'], 20],
-            '#f59e0b', // Amber: Elevated Risk / Near NFZ Border
-            ['>', ['get', 'danger_value'], 14],
-            '#eab308', // Yellow: Moderate Breeze / Light Rain
-            ['>', ['get', 'danger_value'], 9],
-            '#22c55e', // Emerald Green: Low Risk
-            ['>', ['get', 'danger_value'], 5],
-            '#06b6d4', // Cyan: Gentle Breeze
-            '#3b82f6', // Soft Blue: Calm / Optimal Airspace
+            'interpolate',
+            ['linear'],
+            ['get', 'danger_value'],
+            ...ASCENDING_INTERPOLATE_STOPS,
           ],
           'fill-opacity': 0.45,
           'fill-antialias': false,
@@ -287,7 +296,62 @@ function App() {
         </label>
       </div>
 
-      <div ref={mapContainer} className="map" style={{ flex: 1 }} />
+      
+        <div style={{ position: 'relative', flex: 1, minHeight: 0, width: '100%' }}>
+        <div
+          ref={mapContainer}
+          style={{ position: 'absolute', inset: 0 }}
+        />
+
+        {/* Vertical Side Legend */}
+        <div
+          style={{
+            position: 'absolute',
+            bottom: '28px',
+            right: '16px',
+            backgroundColor: 'rgba(15, 23, 42, 0.9)',
+            backdropFilter: 'blur(6px)',
+            color: '#f8fafc',
+            padding: '12px 14px',
+            borderRadius: '8px',
+            boxShadow: '0 4px 14px rgba(0, 0, 0, 0.3)',
+            fontSize: '12px',
+            zIndex: 10,
+          }}
+        >
+          <div style={{ fontWeight: 600, marginBottom: '10px', fontSize: '13px' }}>
+            Airspace Danger
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'stretch', gap: '10px' }}>
+            {/* Vertical Continuous Gradient Bar */}
+            <div
+              style={{
+                width: '12px',
+                borderRadius: '4px',
+                background: LEGEND_GRADIENT,
+              }}
+            />
+
+            {/* Name & Value Labels */}
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'space-between',
+                gap: '8px',
+              }}
+            >
+              {DANGER_COLOR_STOPS.map(([value, , label]) => (
+                <span key={value} style={{ lineHeight: 1 }}>
+                  {label}
+                </span>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+      
     </div>
   )
 }
