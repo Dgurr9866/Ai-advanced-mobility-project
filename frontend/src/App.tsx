@@ -23,6 +23,7 @@ function App() {
 
   // used for weather
   const mapInstance = useRef<maplibregl.Map | null>(null)
+  const latestWeatherRef = useRef<maplibregl.GeoJSONSourceSpecification['data'] | null>(null)
   const [weatherMode, setWeatherMode] = useState<'simulated' | 'live'>('simulated')
   const [timeStepHours, setTimeStepHours] = useState<number>(0)
 
@@ -63,7 +64,7 @@ function App() {
       //add weather grid 
       map.addSource('weather-grid', {
         type: 'geojson',
-        data: {
+        data: latestWeatherRef.current ?? {
           type: 'FeatureCollection',
           features: [],
         },
@@ -97,6 +98,38 @@ function App() {
         },
       })
       
+      fetch('http://localhost:8000/routes/test')
+      .then(response => {
+        if (!response.ok) {
+          throw new Error('Failed to fetch route')
+        }
+        return response.json()
+      })
+      .then(route => {
+
+        // Add the route data to MapLibre
+        map.addSource('test-route', {
+          type: 'geojson',
+          data: route
+        })
+
+        // Draw the route as a red line
+        map.addLayer({
+          id: 'test-route-line',
+          type: 'line',
+          source: 'test-route',
+          paint: {
+            'line-color': '#FF0000',
+            'line-width': 4
+          }
+        })
+
+        console.log('Drone route loaded:', route)
+      })
+      .catch(error => {
+        console.error('Error loading drone route:', error)
+      })
+
       // Register Florida's geographical boundary data.
       map.addSource('florida', {
         type: 'geojson',
@@ -147,7 +180,15 @@ function App() {
         if ((error as Error).name !== 'AbortError') {
           console.error('Failed to fetch weather layer:', error)
         }
-      })
+      }).then((weatherGeoJson) => {
+      latestWeatherRef.current = weatherGeoJson
+      const source = mapInstance.current?.getSource('weather-grid') as
+        | maplibregl.GeoJSONSource
+        | undefined
+      if (source) {
+        source.setData(weatherGeoJson)
+      }
+    })
 
     return () => controller.abort()
   }, [weatherMode, timeStepHours])

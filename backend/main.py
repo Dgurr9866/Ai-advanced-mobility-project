@@ -7,7 +7,7 @@ from geo_utils import (
     NO_FLY_ZONES_GEOJSON_PATH,
     haversine_miles,
 )
-import citygraph
+from citygraph import City
 
 
 app = FastAPI(title="Florida Drone Safety Simulator")
@@ -15,11 +15,18 @@ app = FastAPI(title="Florida Drone Safety Simulator")
 # Allow the local React frontend to access the API
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:5173",
+    ],
     allow_credentials=False,
     allow_methods=["GET"],
     allow_headers=["*"],
 )
+
+#only calculates/lookups once
+weather_grid_cache: dict[tuple[str, float], dict] = {}
 
 # Load Florida landmass & subtract FAA Restricted/Prohibited No-Fly Zones once on startup
 airspace_grid = FloridaAirspaceGrid(
@@ -48,7 +55,13 @@ def get_weather_layer(mode: str = "simulated", time_step_hours: float = 0.0):
     global live_weather
     if mode == "live":
         if live_weather is None:
-            live_weather = LiveFloridaWeather()
+            try:
+                live_weather = LiveFloridaWeather()
+            except Exception as error:
+                print(f"Open-Meteo unavailable ({error}), falling back to simulated weather")
+                return airspace_grid.export_danger_grid_geojson(
+                    simulated_weather, time_step_hours=time_step_hours
+                )
         provider = live_weather
     else:
         provider = simulated_weather
@@ -60,28 +73,27 @@ def get_weather_layer(mode: str = "simulated", time_step_hours: float = 0.0):
 
 @app.get("/routes/test")
 def test_route():
-
-    # Create two Florida cities
     orlando = City("Orlando", 28.5383, -81.3792)
     tampa = City("Tampa", 27.9506, -82.4572)
 
-    # Calculate straight-line distance in miles
-    distance = haversine_miles(orlando, tampa)
+    distance = haversine_miles(
+        orlando.longitude, orlando.latitude,
+        tampa.longitude, tampa.latitude,
+    )
 
-    # Return a GeoJSON feature for MapLibre
     return {
         "type": "Feature",
         "geometry": {
             "type": "LineString",
             "coordinates": [
                 [orlando.longitude, orlando.latitude],
-                [tampa.longitude, tampa.latitude]
-            ]
+                [tampa.longitude, tampa.latitude],
+            ],
         },
         "properties": {
             "origin": orlando.name,
             "destination": tampa.name,
             "distance_miles": round(distance, 2),
-            "route_type": "test"
-        }
+            "route_type": "test",
+        },
     }

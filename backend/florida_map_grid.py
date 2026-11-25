@@ -70,6 +70,14 @@ class FloridaAirspaceGrid:
                     "static_danger": nfz_proximity_danger,
                 }
 
+        # Precompute static GeoJSON polygon rings and aligned NumPy coordinate arrays
+        (
+            self._base_features,
+            self._cell_lons,
+            self._cell_lats,
+            self._cell_static_danger,
+        ) = self._build_base_geojson_features()
+
     def get_neighbors(self, grid_index: tuple) -> list:
         """Returns valid 8-connected neighbor grid indices (excludes ocean & NFZs)."""
         row_index, column_index = grid_index
@@ -139,50 +147,84 @@ class FloridaAirspaceGrid:
 
         return float(danger)
 
-    def export_danger_grid_geojson(
-        self, weather_provider, time_step_hours: float = 0.0
-    ) -> dict:
-        """
-        Exports ONLY valid Florida airspace cells (no oceans, no NFZs) with their
-        computed `danger_value` and weather properties for MapLibre rendering.
-        """
-        half_latitude = self.latitude_step / 2.0
-        half_longitude = self.longitude_step / 2.0
-        features = []
+    def _build_base_geojson_features(self) -> tuple[list[dict], np.ndarray, np.ndarray, np.ndarray]:
+        """Precomputes static polygon geometries and aligned coordinate arrays once."""
+        half_lat = self.latitude_step / 2.0
+        half_lon = self.longitude_step / 2.0
 
-        for grid_index, cell in self.cells.items():
-            longitude = cell["longitude"]
-            latitude = cell["latitude"]
-            weather = weather_provider.get_weather_at(
-                longitude, latitude, time_step_hours
-            )
-            danger_value = self.calculate_cell_danger(
-                grid_index, weather_provider, time_step_hours
-            )
+        base_features = []
+        lons, lats, static_dangers = [], [], []
 
-            polygon_coordinates = [[
-                [longitude - half_longitude, latitude - half_latitude],
-                [longitude + half_longitude, latitude - half_latitude],
-                [longitude + half_longitude, latitude + half_latitude],
-                [longitude - half_longitude, latitude + half_latitude],
-                [longitude - half_longitude, latitude - half_latitude],
-            ]]
+        for cell in self.cells.values():
+            lon = cell["longitude"]
+            lat = cell["latitude"]
+            lons.append(lon)
+            lats.append(lat)
+            static_dangers.append(cell["static_danger"])
 
-            features.append({
+            base_features.append({
                 "type": "Feature",
                 "geometry": {
                     "type": "Polygon",
-                    "coordinates": polygon_coordinates,
+                    "coordinates": [[
+                        [lon - half_lon, lat - half_lat],
+                        [lon + half_lon, lat - half_lat],
+                        [lon + half_lon, lat + half_lat],
+                        [lon - half_lon, lat + half_lat],
+                        [lon - half_lon, lat - half_lat],
+                    ]],
                 },
+                "properties": {},
+            })
+
+        return (
+            base_features,
+            np.array(lons, dtype=np.float64),
+            np.array(lats, dtype=np.float64),
+            np.array(static_dangers, dtype=np.float64),
+        )
+
+    def export_danger_grid_geojson(
+        self, weather_provider, time_step_hours: float = 0.0, drone_payload_ratio: float = 0.5
+    ) -> dict:
+        # Use vectorized batch lookup if provider supports it, else fallback to per-cell
+        if hasattr(weather_provider, "get_weather_batch"):
+            wind_speeds, wind_dirs, rains = weather_provider.get_weather_batch(
+                self._cell_lons, self._cell_lats, time_step_hours
+            )
+        else:
+            results = [
+                weather_provider.get_weather_at(float(lon), float(lat), time_step_hours)
+                for lon, lat in zip(self._cell_lons, self._cell_lats)
+            ]
+            wind_speeds = np.array([r["wind_speed_mph"] for r in results])
+            wind_dirs = np.array([r["wind_direction_degrees"] for r in results])
+            rains = np.array([r["rain_inches_per_hour"] for r in results])
+
+        dangers = (
+            self._cell_static_danger
+            + (wind_speeds * 0.4) * (1.0 + 0.3 * drone_payload_ratio)
+            + rains * 25.0
+            + np.where((wind_speeds > 40.0) | (rains > 1.0), 500.0, 0.0)
+        )
+
+        features = []
+        for base_feat, d, ws, wd, rn in zip(
+            self._base_features,
+            np.round(dangers, 1),
+            np.round(wind_speeds, 1),
+            np.round(wind_dirs, 1),
+            np.round(rains, 2),
+        ):
+            features.append({
+                "type": "Feature",
+                "geometry": base_feat["geometry"],
                 "properties": {
-                    "danger_value": round(danger_value, 1),
-                    "wind_speed_mph": round(weather["wind_speed_mph"], 1),
-                    "wind_direction_degrees": round(weather["wind_direction_degrees"], 1),
-                    "rain_inches_per_hour": round(weather["rain_inches_per_hour"], 2),
+                    "danger_value": float(d),
+                    "wind_speed_mph": float(ws),
+                    "wind_direction_degrees": float(wd),
+                    "rain_inches_per_hour": float(rn),
                 },
             })
 
-        return {
-            "type": "FeatureCollection",
-            "features": features,
-        }
+        return {"type": "FeatureCollection", "features": features}
