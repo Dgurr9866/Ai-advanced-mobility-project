@@ -9,6 +9,8 @@ from geo_utils import (
 )
 from citygraph import City
 from global_path_planner import RouteConfig, find_safest_route
+#import the flight runner which handles pre-flight planning and step-by-step drone simulation
+from flight_runner import FlightRunner
 
 
 app = FastAPI(title="Florida Drone Safety Simulator")
@@ -52,6 +54,45 @@ def _get_weather_provider(mode: str):
                 return simulated_weather
         return live_weather
     return simulated_weather
+
+flight_runner = FlightRunner(airspace_grid)
+
+#runs direct flights using a* pathfinding with simulation
+@app.get("/api/flight/plan")
+def plan_flight(
+    start_lon: float = -80.1918,   # Miami
+    start_lat: float = 25.7617,
+    goal_lon: float = -81.6557,    # Jacksonville
+    goal_lat: float = 30.3322,
+    mode: str = "simulated",
+    time_step_hours: float = 0.0,
+    payload_ratio: float = 0.5,
+):
+    provider = _get_weather_provider(mode)
+    try:
+        return flight_runner.plan_flight(
+            weather_provider=provider,
+            start=(start_lon, start_lat),
+            goal=(goal_lon, goal_lat),
+            time_step_hours=time_step_hours,
+            payload_ratio=payload_ratio,
+        )
+    except (ValueError, RuntimeError) as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+@app.get("/api/flight/run")
+def run_flight(
+    flight_id: str,
+    mode: str = "simulated",
+):
+    provider = _get_weather_provider(mode)
+    try:
+        return flight_runner.run_flight(
+            flight_id=flight_id,
+            weather_provider=provider,
+        )
+    except (KeyError, ValueError, RuntimeError) as error:
+        raise HTTPException(status_code=400, detail=str(error))
 
 @app.get("/")
 def home():

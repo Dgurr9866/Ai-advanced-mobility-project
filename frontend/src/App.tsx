@@ -14,10 +14,16 @@ import './App.css'
 // Import the background worker used to process map data.
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url'
 
+// FlightOverlay component for rendering flight paths and overlays on the map.
+import { FlightOverlay } from './FlightOverlay'
+
 // Configure MapLibre to use the worker bundled by Vite.
 maplibregl.setWorkerUrl(workerUrl)
 
 function App() {
+  // State variable to track when the map is fully initialized and ready for interaction.
+  const [mapReady, setMapReady] = useState<maplibregl.Map | null>(null)
+
   // Reference to the HTML element that will contain the map.
   const mapContainer = useRef<HTMLDivElement>(null)
 
@@ -26,7 +32,7 @@ function App() {
     [500, '#701a75', 'Crash Zone (500+)'],
     [100, '#991b1b', 'Extreme (100)'],
     [40,  '#ef4444', 'Severe (40)'],
-    [25,  '#f97316', 'High Penalty (25)'],
+    [25,  '#f97316', 'High (25)'],
     [15,  '#eab308', 'Moderate (15)'],
     [8,   '#84cc16', 'Low Risk (8)'],
     [0,   '#10b981', 'Optimal (0)'],
@@ -50,10 +56,11 @@ function App() {
 
   // variables for route planning
   // goal points are temporarily hardcoded for testing purposes
-  const [startPoint, setStartPoint] = useState<[number, number]>([-81.3792, 28.5383]) // Orlando
-  const [goalPoint, setGoalPoint] = useState<[number, number]>([-82.4572, 27.9506])   // Tampa
-  const [clickTarget, setClickTarget] = useState<'start' | 'goal'>('goal')
-  const [routeStats, setRouteStats] = useState<{ distance_miles?: number; max_danger?: number } | null>(null)
+
+  // const [startPoint, setStartPoint] = useState<[number, number]>([-81.3792, 28.5383]) // Orlando
+  // const [goalPoint, setGoalPoint] = useState<[number, number]>([-82.4572, 27.9506])   // Tampa
+  // const [clickTarget, setClickTarget] = useState<'start' | 'goal'>('goal')
+  // const [routeStats, setRouteStats] = useState<{ distance_miles?: number; max_danger?: number } | null>(null)
 
   // Initialize the map after the component has mounted.
   useEffect(() => {
@@ -83,6 +90,9 @@ function App() {
         [-75, 32.5]  // Northeast boundary
       ]
     })
+
+    mapInstance.current = map
+    setMapReady(map)
 
     // Add zoom and compass controls.
     map.addControl(new maplibregl.NavigationControl())
@@ -131,37 +141,39 @@ function App() {
         },
       })
       
-      fetch('http://localhost:8000/routes/test')
-      .then(response => {
-        if (!response.ok) {
-          throw new Error('Failed to fetch route')
-        }
-        return response.json()
-      })
-      .then(route => {
+      //was testing for drawing the test route
 
-        // Add the route data to MapLibre
-        map.addSource('test-route', {
-          type: 'geojson',
-          data: route
-        })
+      // fetch('http://localhost:8000/routes/test')
+      // .then(response => {
+      //   if (!response.ok) {
+      //     throw new Error('Failed to fetch route')
+      //   }
+      //   return response.json()
+      // })
+      // .then(route => {
 
-        // Draw the route as a red line
-        map.addLayer({
-          id: 'test-route-line',
-          type: 'line',
-          source: 'test-route',
-          paint: {
-            'line-color': '#FF0000',
-            'line-width': 4
-          }
-        })
+      //   // Add the route data to MapLibre
+      // map.addSource('test-route', {
+      //   type: 'geojson',
+      //   data: route
+      // })
 
-        console.log('Drone route loaded:', route)
-      })
-      .catch(error => {
-        console.error('Error loading drone route:', error)
-      })
+      // // Draw the route as a red line
+      // map.addLayer({
+      //   id: 'test-route-line',
+      //   type: 'line',
+      //   source: 'test-route',
+      //   paint: {
+      //     'line-color': '#FF0000',
+      //     'line-width': 4
+      //   }
+      // })
+
+      //   console.log('Drone route loaded:', route)
+      // })
+      // .catch(error => {
+      //   console.error('Error loading drone route:', error)
+      // })
 
       // Register Florida's geographical boundary data.
       map.addSource('florida', {
@@ -181,6 +193,11 @@ function App() {
       })
 
       mapInstance.current = map
+
+      return () => {
+        setMapReady(null)
+        map.remove()
+      }
     })
 
     // Destroy the map when the component unmounts
@@ -194,73 +211,80 @@ function App() {
 
   // contacts the weather api to update the map
   useEffect(() => {
-    const controller = new AbortController()
+    let isCancelled = false
 
     fetch(
-      `http://localhost:8000/api/weather?mode=${weatherMode}&time_step_hours=${timeStepHours}`,
-      { signal: controller.signal }
+      `http://localhost:8000/api/weather?mode=${weatherMode}&time_step_hours=${timeStepHours}`
     )
-      .then((response) => response.json())
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error(`Weather API error: ${response.status}`)
+        }
+        return response.json()
+      })
       .then((weatherGeoJson) => {
-        const source = mapInstance.current?.getSource('weather-grid') as
+        if (isCancelled) return
+
+        latestWeatherRef.current = weatherGeoJson
+
+        const map = mapInstance.current
+        if (!map) return
+
+        const source = map.getSource('weather-grid') as
           | maplibregl.GeoJSONSource
           | undefined
+
         if (source) {
           source.setData(weatherGeoJson)
         }
       })
       .catch((error) => {
-        if ((error as Error).name !== 'AbortError') {
+        if (!isCancelled) {
           console.error('Failed to fetch weather layer:', error)
         }
-      }).then((weatherGeoJson) => {
-      latestWeatherRef.current = weatherGeoJson
-      const source = mapInstance.current?.getSource('weather-grid') as
-        | maplibregl.GeoJSONSource
-        | undefined
-      if (source) {
-        source.setData(weatherGeoJson)
-      }
-    })
+      })
 
-    return () => controller.abort()
+    return () => {
+      isCancelled = true
+    }
   }, [weatherMode, timeStepHours])
 
   // handles the route planning api call and updates the map with the new route
-  useEffect(() => {
-    const controller = new AbortController()
-    const params = new URLSearchParams({
-      start_lon: String(startPoint[0]),
-      start_lat: String(startPoint[1]),
-      goal_lon: String(goalPoint[0]),
-      goal_lat: String(goalPoint[1]),
-      mode: weatherMode,
-      time_step_hours: String(timeStepHours),
-    })
+  
+  // useEffect(() => {
+  //   const controller = new AbortController()
+  //   const params = new URLSearchParams({
+  //     start_lon: String(startPoint[0]),
+  //     start_lat: String(startPoint[1]),
+  //     goal_lon: String(goalPoint[0]),
+  //     goal_lat: String(goalPoint[1]),
+  //     mode: weatherMode,
+  //     time_step_hours: String(timeStepHours),
+  //   })
 
-    fetch(`http://localhost:8000/api/route?${params.toString()}`, {
-      signal: controller.signal,
-    })
-      .then((res) => res.json())
-      .then((routeFeature) => {
-        if (routeFeature?.geometry) {
-          setRouteStats(routeFeature.properties)
-          const source = mapInstance.current?.getSource('planned-route') as
-            | maplibregl.GeoJSONSource
-            | undefined
-          if (source) {
-            source.setData(routeFeature)
-          }
-        }
-      })
-      .catch((err) => {
-        if ((err as Error).name !== 'AbortError') {
-          console.error('Route error:', err)
-        }
-      })
+  //   fetch(`http://localhost:8000/api/route?${params.toString()}`, {
+  //     signal: controller.signal,
+  //   })
+  //     .then((res) => res.json())
+  //     .then((routeFeature) => {
+  //       if (routeFeature?.geometry) {
+  //         setRouteStats(routeFeature.properties)
+  //         const source = mapInstance.current?.getSource('planned-route') as
+  //           | maplibregl.GeoJSONSource
+  //           | undefined
+  //         if (source) {
+  //           source.setData(routeFeature)
+  //         }
+  //       }
+  //     })
+  //     .catch((err) => {
+  //       if ((err as Error).name !== 'AbortError') {
+  //         console.error('Route error:', err)
+  //       }
+  //     })
 
-    return () => controller.abort()
-  }, [startPoint, goalPoint, weatherMode, timeStepHours])
+  //   return () => controller.abort()
+  // }, [startPoint, goalPoint, weatherMode, timeStepHours])
 
   // Render the HTML container for the map.
   // extra stuff for weather
@@ -296,11 +320,20 @@ function App() {
         </label>
       </div>
 
-      
+
+        {/*renders the map and legend*/}
         <div style={{ position: 'relative', flex: 1, minHeight: 0, width: '100%' }}>
         <div
           ref={mapContainer}
           style={{ position: 'absolute', inset: 0 }}
+        />
+
+        {/*show minimal overlay*/}
+        <FlightOverlay
+          map={mapReady}
+          weatherMode={weatherMode}
+          timeStepHours={timeStepHours}
+          onTimeChange={setTimeStepHours}   // <-- ADD THIS LINE
         />
 
         {/* Vertical Side Legend */}

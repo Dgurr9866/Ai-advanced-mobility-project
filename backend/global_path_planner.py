@@ -87,11 +87,15 @@ def _build_route_geojson(
     sim_time = config.time_step_hours
     speed = max(config.drone_speed_mph, 1.0)
 
+    time_checkpoints = []
+    next_checkpoint_hour = config.time_step_hours + 1.0
+
     for i, idx in enumerate(path_indices):
         heading = None
+        curr_lon, curr_lat = _cell_coords(grid, idx)
+
         if i > 0:
             prev_lon, prev_lat = _cell_coords(grid, path_indices[i - 1])
-            curr_lon, curr_lat = _cell_coords(grid, idx)
             seg_miles, heading = distance_and_bearing_miles(prev_lon, prev_lat, curr_lon, curr_lat)
             total_miles += seg_miles
             sim_time += seg_miles / speed
@@ -106,6 +110,16 @@ def _build_route_geojson(
         max_danger = max(max_danger, danger)
         danger_sum += danger
 
+        # Record a checkpoint every ~1.0 hour of flight and at the final waypoint
+        is_last = i == len(path_indices) - 1
+        if sim_time >= next_checkpoint_hour or is_last:
+            time_checkpoints.append({
+                "time_hours": round(sim_time, 1),
+                "coordinates": [round(curr_lon, 5), round(curr_lat, 5)],
+                "danger": round(danger, 1),
+            })
+            next_checkpoint_hour = sim_time + 1.0
+
     return {
         "type": "Feature",
         "geometry": {
@@ -119,9 +133,9 @@ def _build_route_geojson(
             "max_danger": round(max_danger, 2),
             "waypoint_count": len(waypoints),
             "route_type": "astar_safe",
+            "time_checkpoints": time_checkpoints,
         },
     }
-
 
 def find_safest_route(
     airspace_grid: FloridaAirspaceGrid,

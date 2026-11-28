@@ -70,8 +70,9 @@ class SimulatedFloridaWeather(BaseWeatherProvider):
         self.base_wind_direction_degrees = base_wind_direction_degrees
         self.storms = storms or []
 
-        # Build a 3D (time, latitude, longitude) noise grid covering Florida + 6-hour window
-        self.noise_times = np.linspace(0.0, 6.0, 13)  # Every 0.5 hours
+        #the time needs to be in this window or the weather will be extreme
+        # Build a 3D (time, latitude, longitude) noise grid covering Florida + 12-hour window
+        self.noise_times = np.linspace(0.0, 12.0, 25)  # Every 0.5 hours
         self.noise_latitudes = np.linspace(
             FLORIDA_BOUNDS["min_latitude"], FLORIDA_BOUNDS["max_latitude"], 56
         )
@@ -154,36 +155,41 @@ class SimulatedFloridaWeather(BaseWeatherProvider):
     def get_weather_batch(
       self, longitudes: np.ndarray, latitudes: np.ndarray, time_step_hours: float = 0.0
   ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-      times = np.full_like(longitudes, time_step_hours)
-      query = np.column_stack([times, latitudes, longitudes])
+        clamped_time = float(np.clip(time_step_hours, self.noise_times[0], self.noise_times[-1]))
+        times = np.full_like(longitudes, clamped_time)
 
-      wind_speeds = np.maximum(2.0, self.base_wind_speed_mph + self.speed_noise_interp(query) * 5.5)
-      wind_dirs = (self.base_wind_direction_degrees + self.angle_noise_interp(query) * 35.0) % 360.0
-      rains = np.maximum(0.0, (self.moisture_noise_interp(query) - 0.85) * 0.22)
+        times = np.full_like(longitudes, time_step_hours)
+        query = np.column_stack([times, latitudes, longitudes])
 
-      for storm in self.storms:
-          s_lon = storm["start_longitude"] + storm["velocity_longitude_per_hour"] * time_step_hours
-          s_lat = storm["start_latitude"] + storm["velocity_latitude_per_hour"] * time_step_hours
+        wind_speeds = np.maximum(2.0, self.base_wind_speed_mph + self.speed_noise_interp(query) * 5.5)
+        wind_dirs = (self.base_wind_direction_degrees + self.angle_noise_interp(query) * 35.0) % 360.0
+        rains = np.maximum(0.0, (self.moisture_noise_interp(query) - 0.85) * 0.22)
 
-          # Vectorized Haversine across all cells at once
-          dlat = np.radians(latitudes - s_lat)
-          dlon = np.radians(longitudes - s_lon)
-          a = np.sin(dlat / 2) ** 2 + np.cos(np.radians(s_lat)) * np.cos(np.radians(latitudes)) * np.sin(dlon / 2) ** 2
-          dist_miles = 2 * 3958.8 * np.arcsin(np.sqrt(a))
+        for storm in self.storms:
+            s_lon = storm["start_longitude"] + storm["velocity_longitude_per_hour"] * time_step_hours
+            s_lat = storm["start_latitude"] + storm["velocity_latitude_per_hour"] * time_step_hours
 
-          mask = dist_miles < storm["radius_miles"] * 2.0
-          if np.any(mask):
-              intensity = np.exp(-0.5 * (dist_miles[mask] / (storm["radius_miles"] * 0.5)) ** 2)
-              wind_speeds[mask] += np.maximum(0.0, (storm["peak_wind_mph"] - wind_speeds[mask]) * intensity)
-              rains[mask] += storm["peak_rain_inches_per_hour"] * intensity
-              wind_dirs[mask] = (wind_dirs[mask] + 45.0 * intensity) % 360.0
+            # Vectorized Haversine across all cells at once
+            dlat = np.radians(latitudes - s_lat)
+            dlon = np.radians(longitudes - s_lon)
+            a = np.sin(dlat / 2) ** 2 + np.cos(np.radians(s_lat)) * np.cos(np.radians(latitudes)) * np.sin(dlon / 2) ** 2
+            dist_miles = 2 * 3958.8 * np.arcsin(np.sqrt(a))
 
-      return wind_speeds, wind_dirs, rains
+            mask = dist_miles < storm["radius_miles"] * 2.0
+            if np.any(mask):
+                intensity = np.exp(-0.5 * (dist_miles[mask] / (storm["radius_miles"] * 0.5)) ** 2)
+                wind_speeds[mask] += np.maximum(0.0, (storm["peak_wind_mph"] - wind_speeds[mask]) * intensity)
+                rains[mask] += storm["peak_rain_inches_per_hour"] * intensity
+                wind_dirs[mask] = (wind_dirs[mask] + 45.0 * intensity) % 360.0
+
+        return wind_speeds, wind_dirs, rains
 
     def get_weather_at(
         self, longitude: float, latitude: float, time_step_hours: float = 0.0
     ) -> dict:
-        query = np.array([[time_step_hours, latitude, longitude]])
+        clamped_time = float(np.clip(time_step_hours, self.noise_times[0], self.noise_times[-1]))
+        query = np.array([[clamped_time, latitude, longitude]])
+        # query = np.array([[time_step_hours, latitude, longitude]])
 
         # 1. Underlying Perlin-style wind & moisture field across all of Florida
         speed_noise = float(self.speed_noise_interp(query)[0])
